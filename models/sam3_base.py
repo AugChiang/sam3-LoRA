@@ -18,7 +18,7 @@ CONSONANT_SOUND_EXCEPTIONS = {
 
 ARTICLES = {"a", "an"}
 
-class SegmentationModel:
+class SAM3Wrapper:
     def __init__(self, config, device:str = "cpu"):
         self.config = config
         self.model_type = self.config['model_type']
