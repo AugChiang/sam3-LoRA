@@ -1,9 +1,11 @@
 # system temp
 *__pycache__*
 
-# test data
+# test
 dataset/
 checkpoints/
+*test*.sh
+outputs/
 
 # settings
 .vscode
