@@ -22,6 +22,7 @@ try:
         move_batch,
         compute_loss,
         compute_metrics,
+        select_original_sam3_mask
     )
 except ImportError:
     from dataset import DentalInstrumentDataset
@@ -34,6 +35,7 @@ except ImportError:
         move_batch,
         compute_loss,
         compute_metrics,
+        select_original_sam3_mask
     )
 
 
@@ -241,32 +243,6 @@ def run_original_sam3_predict(
     output_path = args.output or "prediction_mask.npy"
     np.save(output_path, mask.astype(np.uint8))
     print(f"Saved base SAM3 mask to {output_path}")
-
-
-def select_original_sam3_mask(output: Dict[str, Any], image_size: Tuple[int, int]) -> np.ndarray:
-    """Select the best mask from a SAM3Processor output state."""
-
-    width, height = image_size
-    masks = output.get("masks")
-    if masks is None or len(masks) == 0:
-        return np.zeros((height, width), dtype=np.uint8)
-
-    if isinstance(masks, torch.Tensor):
-        masks_tensor = masks.detach().cpu()
-    else:
-        masks_tensor = torch.as_tensor(masks)
-
-    scores = output.get("scores")
-    if scores is not None and len(scores) > 0:
-        scores_tensor = scores.detach().cpu() if isinstance(scores, torch.Tensor) else torch.as_tensor(scores)
-        mask_idx = int(scores_tensor.argmax().item())
-    else:
-        mask_idx = 0
-
-    mask = masks_tensor[mask_idx]
-    while mask.ndim > 2:
-        mask = mask.squeeze(0)
-    return (mask.numpy() > 0).astype(np.uint8)
 
 
 def parse_args() -> argparse.Namespace:
