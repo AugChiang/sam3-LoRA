@@ -15,8 +15,8 @@ except ImportError:
     from utils import resolve_path
 
 
-class DentalInstrumentDataset(Dataset):
-    """Load image, text alias, and binary mask samples for dental instruments."""
+class CustomDataset(Dataset):
+    """Load image, text alias, and binary mask samples for Out-of-Distribution objects (unseen objects)."""
 
     def __init__(
         self,

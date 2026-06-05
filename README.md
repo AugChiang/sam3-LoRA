@@ -16,7 +16,7 @@ The current implementation uses:
 .
 ├── main.py                    # train/validation loop, shared predict runner
 ├── predict.py                 # single-image inference CLI wrapper
-├── dataset.py                 # DentalInstrumentDataset and annotation/mask loading
+├── dataset.py                 # Custom dataset and annotation/mask loading
 ├── utils.py                   # config loading, batching, losses, metrics, AMP helpers
 ├── builder.py                 # dataloader/model builders
 ├── get_config.py              # legacy standalone YAML config loader
@@ -67,7 +67,8 @@ checkpoints/bpe_simple_vocab_16e6.txt.gz
 
 ## Dataset Format
 
-`configs/config.yaml` points to `dataset/annotation.json`, `dataset/images`, and `dataset/masks`. The annotation file may be a list or a dictionary with a top-level `samples` list:
+`configs/config.yaml` points to `dataset/annotation.json`, `dataset/images`, and `dataset/masks`. 
+The annotation file may be a list or a dictionary with a top-level `samples` list, for example:
 
 ```json
 {

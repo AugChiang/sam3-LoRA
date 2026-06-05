@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Batch:
-    """Mini-batch produced by the dental instrument dataset collator."""
+    """Mini-batch produced by the custom dataset collator."""
     images: torch.Tensor
     masks: torch.Tensor
     texts: List[str]

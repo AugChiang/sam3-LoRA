@@ -3,10 +3,10 @@ from torch.utils.data import DataLoader, random_split
 from models import TextConditionedSAM3LoRA, SAM3Wrapper
 
 try:
-    from .dataset import DentalInstrumentDataset
+    from .dataset import CustomDataset
     from .utils import *
 except ImportError:
-    from dataset import DentalInstrumentDataset
+    from dataset import CustomDataset
     from utils import *
 
 
@@ -15,7 +15,7 @@ def build_dataloaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]:
 
     data_cfg = config["dataset"]
     train_cfg = config.get("training", {})
-    dataset = DentalInstrumentDataset(
+    dataset = CustomDataset(
         annotation_path=data_cfg["annotation_path"],
         image_dir=data_cfg["input_img_dir"],
         mask_dir=data_cfg["mask_dir"],
