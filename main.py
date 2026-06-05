@@ -79,9 +79,8 @@ def build_dataloaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]:
     return train_loader, val_loader
 
 
-def build_model(config: Dict[str, Any], device: torch.device) -> TextConditionedSAM3LoRA:
-    """Build the SAM3 LoRA training model on a CUDA device."""
-
+def require_cuda_device(device: torch.device) -> None:
+    """Validate that this SAM3 checkout can construct CUDA-only model components."""
     if device.type != "cuda":
         raise RuntimeError(
             "This SAM3 checkout allocates CUDA tensors during model construction. "
@@ -94,9 +93,21 @@ def build_model(config: Dict[str, Any], device: torch.device) -> TextConditioned
             "checkout also allocates CUDA tensors during model construction, so run on "
             "a CUDA machine or update the SAM3 builder before CPU-only training."
         )
+
+
+def build_sam3_wrapper(config: Dict[str, Any], device: torch.device) -> SAM3Wrapper:
+    """Build the original SAM3 wrapper without LoRA or fusion modules."""
+
+    require_cuda_device(device)
     sam3_config = dict(config["segmentation_model"])
     sam3_config.setdefault("prompt", config.get("inference", {}).get("default_prompt", "object"))
-    sam3 = SAM3Wrapper(sam3_config, device=str(device))
+    return SAM3Wrapper(sam3_config, device=str(device))
+
+
+def build_model(config: Dict[str, Any], device: torch.device) -> TextConditionedSAM3LoRA:
+    """Build the SAM3 LoRA training model on a CUDA device."""
+
+    sam3 = build_sam3_wrapper(config, device)
     model = TextConditionedSAM3LoRA(sam3, config).to(device)
     return model
 
@@ -189,6 +200,10 @@ def run_predict(args: argparse.Namespace) -> None:
 
     config = get_config(args.config)
     device = torch.device(args.device or config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+    if args.mode == "sam3":
+        run_original_sam3_predict(args, config, device)
+        return
+
     checkpoint_path = args.checkpoint or config.get("inference", {}).get("checkpoint")
     lora_dir = args.lora_dir or config.get("inference", {}).get("lora_dir")
 
@@ -212,6 +227,48 @@ def run_predict(args: argparse.Namespace) -> None:
     print(f"Saved mask to {output_path}")
 
 
+def run_original_sam3_predict(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    device: torch.device,
+) -> None:
+    """Run base SAM3 text-prompt inference without LoRA or fusion modules."""
+
+    sam3 = build_sam3_wrapper(config, device)
+    image = Image.open(args.image).convert("RGB")
+    output = sam3.pred(image, txt_prompt=args.object)
+    mask = select_original_sam3_mask(output, image.size)
+    output_path = args.output or "prediction_mask.npy"
+    np.save(output_path, mask.astype(np.uint8))
+    print(f"Saved base SAM3 mask to {output_path}")
+
+
+def select_original_sam3_mask(output: Dict[str, Any], image_size: Tuple[int, int]) -> np.ndarray:
+    """Select the best mask from a SAM3Processor output state."""
+
+    width, height = image_size
+    masks = output.get("masks")
+    if masks is None or len(masks) == 0:
+        return np.zeros((height, width), dtype=np.uint8)
+
+    if isinstance(masks, torch.Tensor):
+        masks_tensor = masks.detach().cpu()
+    else:
+        masks_tensor = torch.as_tensor(masks)
+
+    scores = output.get("scores")
+    if scores is not None and len(scores) > 0:
+        scores_tensor = scores.detach().cpu() if isinstance(scores, torch.Tensor) else torch.as_tensor(scores)
+        mask_idx = int(scores_tensor.argmax().item())
+    else:
+        mask_idx = 0
+
+    mask = masks_tensor[mask_idx]
+    while mask.ndim > 2:
+        mask = mask.squeeze(0)
+    return (mask.numpy() > 0).astype(np.uint8)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse the training and inference command-line interface."""
 
@@ -228,6 +285,12 @@ def parse_args() -> argparse.Namespace:
     predict_parser.add_argument("--checkpoint")
     predict_parser.add_argument("--lora-dir")
     predict_parser.add_argument("--device")
+    predict_parser.add_argument(
+        "--mode",
+        choices=["lora", "sam3"],
+        default="lora",
+        help="Use trained LoRA adapters or original SAM3 checkpoint-only inference.",
+    )
     return parser.parse_args()
 
 

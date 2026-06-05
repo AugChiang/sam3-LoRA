@@ -134,10 +134,13 @@ The SAM3 segmentation head is intentionally not PEFT-wrapped because SAM3 runs i
 
 ## How To Run Inference
 
-After training, run:
+After training, run LoRA-adapted inference:
 
 ```bash
-python predict.py --image dataset/images/0001.png --object "periodontal probe"
+python predict.py \
+  --mode lora \
+  --image dataset/images/0001.png \
+  --object "periodontal probe"
 ```
 
 By default this reads:
@@ -164,9 +167,34 @@ You can also run inference through the `main.py` subcommand:
 
 ```bash
 python main.py --config ./configs/config.yaml predict \
+  --mode lora \
   --image dataset/images/0001.png \
   --object "periodontal probe" \
   --output prediction_mask.npy
+```
+
+### Original SAM3 Inference
+
+To run the original SAM3 checkpoint without LoRA adapters, CLIP/SigLIP fusion, or the trained checkpoint, use `--mode sam3` with the same image/object arguments:
+
+```bash
+python predict.py \
+  --mode sam3 \
+  --image dataset/images/0001.png \
+  --object "periodontal probe" \
+  --output sam3_base_mask.npy
+```
+
+This mode initializes only `models/sam3_base.py::SAM3Wrapper` with `checkpoints/sam3.pt` and `checkpoints/bpe_simple_vocab_16e6.txt.gz`, runs SAM3 text-prompt prediction, selects the highest-score mask, and saves it as a binary `.npy` file.
+
+The same mode is available through `main.py`:
+
+```bash
+python main.py --config ./configs/config.yaml predict \
+  --mode sam3 \
+  --image dataset/images/0001.png \
+  --object "periodontal probe" \
+  --output sam3_base_mask.npy
 ```
 
 ## Validation Metrics

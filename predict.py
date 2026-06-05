@@ -16,6 +16,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint")
     parser.add_argument("--lora-dir")
     parser.add_argument("--device")
+    parser.add_argument(
+        "--mode",
+        choices=["lora", "sam3"],
+        default="lora",
+        help="Use trained LoRA adapters or original SAM3 checkpoint-only inference.",
+    )
     return parser.parse_args()
 
 
