@@ -8,6 +8,10 @@ outputs/
 *.sh
 *.npy
 *.ipynb
+*.png
+*.jpg
+*.jpeg
+*.webp
 
 # settings
 .vscode
