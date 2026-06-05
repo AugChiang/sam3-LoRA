@@ -14,10 +14,11 @@ The current implementation uses:
 
 ```text
 .
-├── main.py                    # train/validation loop, dataloader/model builders, shared predict runner
+├── main.py                    # train/validation loop, shared predict runner
 ├── predict.py                 # single-image inference CLI wrapper
 ├── dataset.py                 # DentalInstrumentDataset and annotation/mask loading
 ├── utils.py                   # config loading, batching, losses, metrics, AMP helpers
+├── builder.py                 # dataloader/model builders
 ├── get_config.py              # legacy standalone YAML config loader
 ├── models/
 │   ├── __init__.py            # model exports
