@@ -1,5 +1,14 @@
+# system temp
 *__pycache__*
-.vscode
+
+# test data
 dataset/
 checkpoints/
+
+# settings
+.vscode
+.codex
+
+# others
 .env
+AGENTS.md
