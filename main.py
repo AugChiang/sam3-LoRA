@@ -10,17 +10,31 @@ import torch.nn as nn
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 from models import TextConditionedSAM3LoRA, SAM3Wrapper
-from .dataset import DentalInstrumentDataset
-from .utils import (
-    get_config, 
-    seed_everything,
-    autocast_dtype,
-    autocast_enabled, 
-    collate_samples,
-    move_batch, 
-    compute_loss, 
-    compute_metrics
-)
+
+try:
+    from .dataset import DentalInstrumentDataset
+    from .utils import (
+        get_config,
+        seed_everything,
+        autocast_dtype,
+        autocast_enabled,
+        collate_samples,
+        move_batch,
+        compute_loss,
+        compute_metrics,
+    )
+except ImportError:
+    from dataset import DentalInstrumentDataset
+    from utils import (
+        get_config,
+        seed_everything,
+        autocast_dtype,
+        autocast_enabled,
+        collate_samples,
+        move_batch,
+        compute_loss,
+        compute_metrics,
+    )
 
 
 def build_dataloaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]:

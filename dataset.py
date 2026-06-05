@@ -9,7 +9,10 @@ from torch.utils.data import Dataset
 from torchvision.transforms import v2
 from typing import Dict, Any
 
-from .utils import resolve_path
+try:
+    from .utils import resolve_path
+except ImportError:
+    from utils import resolve_path
 
 
 class DentalInstrumentDataset(Dataset):
