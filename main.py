@@ -1,3 +1,5 @@
+"""Train and run text-conditioned SAM3 segmentation with PEFT LoRA adapters."""
+
 import argparse
 import json
 import random
@@ -39,6 +41,8 @@ except ImportError:
 
 @dataclass
 class Batch:
+    """Mini-batch produced by the dental instrument dataset collator."""
+
     images: torch.Tensor
     masks: torch.Tensor
     texts: List[str]
@@ -47,6 +51,8 @@ class Batch:
 
 
 def seed_everything(seed: int) -> None:
+    """Seed Python, NumPy, and PyTorch RNGs for reproducible data splits."""
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -54,21 +60,29 @@ def seed_everything(seed: int) -> None:
 
 
 def autocast_enabled(device: torch.device, requested: bool) -> bool:
+    """Return whether autocast should be enabled for the requested device."""
+
     return requested and device.type in {"cuda", "cpu"}
 
 
 def autocast_dtype(device: torch.device, requested: str) -> torch.dtype:
+    """Choose the autocast dtype for CPU or CUDA mixed precision."""
+
     if device.type == "cpu":
         return torch.bfloat16
     return torch.bfloat16 if requested == "bfloat16" else torch.float16
 
 
 def resolve_path(path: str, base_dir: str = ".") -> str:
+    """Resolve a possibly relative dataset path against a base directory."""
+
     p = Path(path)
     return str(p if p.is_absolute() else Path(base_dir) / p)
 
 
 class DentalInstrumentDataset(Dataset):
+    """Load image, text alias, and binary mask samples for dental instruments."""
+
     def __init__(
         self,
         annotation_path: str,
@@ -76,7 +90,19 @@ class DentalInstrumentDataset(Dataset):
         mask_dir: str,
         resolution: int = 1008,
         alias_mode: str = "random",
-    ):
+    ) -> None:
+        """Initialize a dataset from JSON annotations and asset directories.
+
+        Args:
+            annotation_path: JSON file containing either a sample list or a
+                dictionary with a top-level ``samples`` list.
+            image_dir: Directory containing image files referenced by samples.
+            mask_dir: Directory containing binary ``.npy`` mask files.
+            resolution: Square training resolution used for image and mask resize.
+            alias_mode: ``canonical`` always uses the canonical name; other values
+                randomly sample from canonical name plus aliases.
+        """
+
         self.annotation_path = annotation_path
         self.image_dir = image_dir
         self.mask_dir = mask_dir
@@ -100,9 +126,13 @@ class DentalInstrumentDataset(Dataset):
         )
 
     def __len__(self) -> int:
+        """Return the number of annotated object-mask samples."""
+
         return len(self.samples)
 
     def _choose_text(self, sample: Dict[str, Any]) -> str:
+        """Choose the text prompt for a sample, including aliases when enabled."""
+
         names = [sample["canonical_name"], *sample.get("aliases", [])]
         names = [name for name in names if isinstance(name, str) and name.strip()]
         if not names:
@@ -114,6 +144,13 @@ class DentalInstrumentDataset(Dataset):
         return random.choice(names)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """Return one transformed sample.
+
+        Returns:
+            A dictionary with ``image`` as ``[3, H, W]``, ``mask`` as
+            ``[1, H, W]``, the selected text prompt, and resolved source paths.
+        """
+
         sample = self.samples[idx]
         image_path = resolve_path(sample["image"], self.image_dir)
         mask_path = resolve_path(sample["mask"], self.mask_dir)
@@ -138,6 +175,8 @@ class DentalInstrumentDataset(Dataset):
 
 
 def collate_samples(samples: List[Dict[str, Any]]) -> Batch:
+    """Stack transformed dataset samples into a training batch."""
+
     return Batch(
         images=torch.stack([s["image"] for s in samples]),
         masks=torch.stack([s["mask"] for s in samples]),
@@ -148,7 +187,11 @@ def collate_samples(samples: List[Dict[str, Any]]) -> Batch:
 
 
 class CrossAttentionFusion(nn.Module):
-    def __init__(self, sam_dim: int = 256, text_dim: int = 768, num_heads: int = 8):
+    """Fuse SAM3 text tokens with external CLIP/SigLIP token embeddings."""
+
+    def __init__(self, sam_dim: int = 256, text_dim: int = 768, num_heads: int = 8) -> None:
+        """Create the projection, attention, and residual gating layers."""
+
         super().__init__()
         self.sam_norm = nn.LayerNorm(sam_dim)
         self.text_norm = nn.LayerNorm(sam_dim)
@@ -163,6 +206,8 @@ class CrossAttentionFusion(nn.Module):
         text_tokens: torch.Tensor,
         text_attention_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """Return SAM token features after cross-attending to external text tokens."""
+
         batch_first_sam = sam_tokens.transpose(0, 1)
         projected_text = self.text_proj(text_tokens)
         key_padding_mask = None
@@ -180,7 +225,11 @@ class CrossAttentionFusion(nn.Module):
 
 
 class TextConditionedSAM3LoRA(nn.Module):
-    def __init__(self, sam3: SegmentationModel, config: Dict[str, Any]):
+    """SAM3 wrapper that trains LoRA adapters and a text fusion module."""
+
+    def __init__(self, sam3: SegmentationModel, config: Dict[str, Any]) -> None:
+        """Build PEFT-wrapped SAM3 modules and the external text encoder."""
+
         super().__init__()
         self.sam3_wrapper = sam3
         self.sam3 = sam3.model
@@ -203,10 +252,14 @@ class TextConditionedSAM3LoRA(nn.Module):
         )
 
     def _freeze_sam3_base(self) -> None:
+        """Freeze all SAM3 base parameters before applying trainable LoRA adapters."""
+
         for param in self.sam3.parameters():
             param.requires_grad = False
 
     def _require_peft(self) -> None:
+        """Raise a clear error when PEFT is unavailable."""
+
         if get_peft_model is None:
             raise ImportError(
                 "HuggingFace PEFT is required for LoRA. Install it with "
@@ -214,6 +267,8 @@ class TextConditionedSAM3LoRA(nn.Module):
             )
 
     def _apply_lora(self, cfg: Dict[str, Any]) -> None:
+        """Attach LoRA adapters to SAM3 vision and transformer decoder modules."""
+
         if not cfg.get("enabled", True):
             return
         self._require_peft()
@@ -233,14 +288,12 @@ class TextConditionedSAM3LoRA(nn.Module):
         self.sam3.transformer.decoder = get_peft_model(
             self.sam3.transformer.decoder, lora_cfg
         )
-        if self.sam3.segmentation_head is not None:
-            self.sam3.segmentation_head = get_peft_model(
-                self.sam3.segmentation_head, lora_cfg
-            )
 
     def _build_text_encoder(
         self, cfg: Dict[str, Any]
     ) -> Tuple[AutoTokenizer, nn.Module, int]:
+        """Load a HuggingFace text encoder and return its hidden size."""
+
         model_name = cfg.get("name", "openai/clip-vit-base-patch32")
         self.freeze_text_encoder = cfg.get("freeze", True)
         model_kwargs = {"use_safetensors": cfg.get("use_safetensors", False)}
@@ -267,9 +320,13 @@ class TextConditionedSAM3LoRA(nn.Module):
         return tokenizer, text_encoder, hidden_size
 
     def trainable_parameters(self) -> List[nn.Parameter]:
+        """Return parameters optimized during LoRA/fusion training."""
+
         return [p for p in self.parameters() if p.requires_grad]
 
     def _external_text_tokens(self, texts: List[str], device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Tokenize object names and encode them with CLIP/SigLIP text features."""
+
         tokens = self.tokenizer(
             texts,
             padding=True,
@@ -283,6 +340,16 @@ class TextConditionedSAM3LoRA(nn.Module):
         return output.last_hidden_state, tokens["attention_mask"]
 
     def forward(self, images: torch.Tensor, texts: List[str]) -> Dict[str, torch.Tensor]:
+        """Run SAM3 grounding with fused external text features.
+
+        Args:
+            images: Normalized image tensor of shape ``[B, 3, H, W]``.
+            texts: Object prompts, one per image.
+
+        Returns:
+            SAM3 output dictionary containing logits, boxes, masks, and internals.
+        """
+
         device = images.device
         batch_size = images.shape[0]
 
@@ -336,6 +403,8 @@ class TextConditionedSAM3LoRA(nn.Module):
         return out
 
     def predict_mask(self, image: Image.Image, text: str, device: torch.device) -> torch.Tensor:
+        """Predict one binary mask for an image/object prompt pair."""
+
         transform = v2.Compose(
             [
                 v2.ToImage(),
@@ -355,6 +424,8 @@ class TextConditionedSAM3LoRA(nn.Module):
         return (logits.sigmoid() > self.confidence_threshold).detach().cpu()
 
     def save_checkpoint(self, output_dir: str, epoch: int, metrics: Dict[str, float]) -> None:
+        """Save fusion weights, metrics, config, and separate LoRA adapter weights."""
+
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
         torch.save(
@@ -369,39 +440,52 @@ class TextConditionedSAM3LoRA(nn.Module):
         self.export_lora(output / "lora")
 
     def load_checkpoint(self, checkpoint_path: str, strict: bool = True) -> Dict[str, Any]:
+        """Load fusion-module checkpoint state and return checkpoint metadata."""
+
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         self.fusion.load_state_dict(checkpoint["fusion"], strict=strict)
         return checkpoint
 
     def load_lora(self, lora_dir: str) -> None:
+        """Load exported image-encoder and decoder LoRA adapters."""
+
         if PeftModel is None:
             self._require_peft()
         base = Path(lora_dir)
-        self.sam3.backbone.vision_backbone = PeftModel.from_pretrained(
-            self.sam3.backbone.vision_backbone, base / "image_encoder"
+        self._load_peft_adapter(
+            self.sam3.backbone.vision_backbone, base / "image_encoder", "loaded_image"
         )
-        self.sam3.transformer.decoder = PeftModel.from_pretrained(
-            self.sam3.transformer.decoder, base / "mask_decoder"
+        self._load_peft_adapter(
+            self.sam3.transformer.decoder, base / "mask_decoder", "loaded_decoder"
         )
-        seg_head_dir = base / "segmentation_head"
-        if seg_head_dir.exists() and self.sam3.segmentation_head is not None:
-            self.sam3.segmentation_head = PeftModel.from_pretrained(
-                self.sam3.segmentation_head, seg_head_dir
-            )
+
+    @staticmethod
+    def _load_peft_adapter(module: nn.Module, adapter_dir: Path, adapter_name: str) -> None:
+        """Load one PEFT adapter into an already PEFT-wrapped module."""
+
+        if not adapter_dir.exists():
+            raise FileNotFoundError(f"LoRA adapter directory not found: {adapter_dir}")
+        if hasattr(module, "load_adapter"):
+            module.load_adapter(str(adapter_dir), adapter_name=adapter_name, is_trainable=False)
+            module.set_adapter(adapter_name)
+            return
+        raise TypeError(
+            f"Expected a PEFT-wrapped module with load_adapter(), got {type(module).__name__}"
+        )
 
     def export_lora(self, output_dir: Path) -> None:
+        """Export LoRA adapter weights without saving the SAM3 base checkpoint."""
+
         output_dir.mkdir(parents=True, exist_ok=True)
         if hasattr(self.sam3.backbone.vision_backbone, "save_pretrained"):
             self.sam3.backbone.vision_backbone.save_pretrained(output_dir / "image_encoder")
         if hasattr(self.sam3.transformer.decoder, "save_pretrained"):
             self.sam3.transformer.decoder.save_pretrained(output_dir / "mask_decoder")
-        if self.sam3.segmentation_head is not None and hasattr(
-            self.sam3.segmentation_head, "save_pretrained"
-        ):
-            self.sam3.segmentation_head.save_pretrained(output_dir / "segmentation_head")
 
 
 def select_text_conditioned_masks(out: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """Select the highest-scoring predicted mask for each batch item."""
+
     logits = out["pred_logits"].squeeze(-1)
     best_idx = logits.argmax(dim=1)
     batch_idx = torch.arange(logits.shape[0], device=logits.device)
@@ -409,6 +493,8 @@ def select_text_conditioned_masks(out: Dict[str, torch.Tensor]) -> torch.Tensor:
 
 
 def dice_loss(logits: torch.Tensor, targets: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Compute soft Dice loss from mask logits and binary targets."""
+
     probs = logits.sigmoid()
     targets = targets.squeeze(1)
     probs = probs.flatten(1)
@@ -424,6 +510,8 @@ def focal_loss(
     alpha: float = 0.25,
     gamma: float = 2.0,
 ) -> torch.Tensor:
+    """Compute sigmoid focal loss for foreground/background mask pixels."""
+
     targets = targets.squeeze(1)
     bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
     probs = logits.sigmoid()
@@ -433,6 +521,8 @@ def focal_loss(
 
 
 def resize_targets(targets: torch.Tensor, pred_hw: Tuple[int, int]) -> torch.Tensor:
+    """Resize target masks to match prediction spatial dimensions."""
+
     if targets.shape[-2:] == pred_hw:
         return targets
     return F.interpolate(targets, size=pred_hw, mode="nearest")
@@ -444,6 +534,8 @@ def compute_loss(
     dice_weight: float = 1.0,
     focal_weight: float = 1.0,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """Compute weighted Dice plus Focal training loss."""
+
     pred_logits = select_text_conditioned_masks(out)
     targets = resize_targets(targets, pred_logits.shape[-2:])
     d_loss = dice_loss(pred_logits, targets)
@@ -454,6 +546,8 @@ def compute_loss(
 
 @torch.no_grad()
 def compute_metrics(out: Dict[str, torch.Tensor], targets: torch.Tensor) -> Dict[str, float]:
+    """Compute validation mIoU and Dice from SAM3 mask outputs."""
+
     logits = select_text_conditioned_masks(out)
     targets = resize_targets(targets, logits.shape[-2:]).squeeze(1).bool()
     preds = logits.sigmoid() > 0.5
@@ -468,6 +562,8 @@ def compute_metrics(out: Dict[str, torch.Tensor], targets: torch.Tensor) -> Dict
 
 
 def move_batch(batch: Batch, device: torch.device) -> Batch:
+    """Move image and mask tensors to the target device while preserving metadata."""
+
     return Batch(
         images=batch.images.to(device, non_blocking=True),
         masks=batch.masks.to(device, non_blocking=True),
@@ -478,6 +574,8 @@ def move_batch(batch: Batch, device: torch.device) -> Batch:
 
 
 def build_dataloaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]:
+    """Create train and validation dataloaders from YAML configuration."""
+
     data_cfg = config["dataset"]
     train_cfg = config.get("training", {})
     dataset = DentalInstrumentDataset(
@@ -518,6 +616,8 @@ def build_dataloaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]:
 
 
 def build_model(config: Dict[str, Any], device: torch.device) -> TextConditionedSAM3LoRA:
+    """Build the SAM3 LoRA training model on a CUDA device."""
+
     if device.type != "cuda":
         raise RuntimeError(
             "This SAM3 checkout allocates CUDA tensors during model construction. "
@@ -538,6 +638,8 @@ def build_model(config: Dict[str, Any], device: torch.device) -> TextConditioned
 
 
 def train(config: Dict[str, Any]) -> None:
+    """Train LoRA adapters and the cross-attention fusion module."""
+
     seed_everything(config.get("seed", 42))
     device = torch.device(config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     train_loader, val_loader = build_dataloaders(config)
@@ -548,8 +650,8 @@ def train(config: Dict[str, Any]) -> None:
         lr=train_cfg.get("lr", 1e-4),
         weight_decay=train_cfg.get("weight_decay", 1e-4),
     )
-    scaler = torch.cuda.amp.GradScaler(
-        enabled=train_cfg.get("mixed_precision", True) and device.type == "cuda"
+    scaler = torch.amp.GradScaler(
+        "cuda", enabled=train_cfg.get("mixed_precision", True) and device.type == "cuda"
     )
     use_autocast = autocast_enabled(device, train_cfg.get("mixed_precision", True))
     amp_dtype = autocast_dtype(device, train_cfg.get("amp_dtype", "float16"))
@@ -602,6 +704,8 @@ def validate(
     amp_dtype: torch.dtype,
     amp_enabled: bool,
 ) -> Dict[str, float]:
+    """Evaluate a model over a validation loader and average metrics."""
+
     model.eval()
     totals = {"miou": 0.0, "dice": 0.0}
     count = 0
@@ -617,6 +721,8 @@ def validate(
 
 
 def run_predict(args: argparse.Namespace) -> None:
+    """Run single-image text-conditioned segmentation from parsed CLI args."""
+
     config = get_config(args.config)
     device = torch.device(args.device or config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     model = build_model(config, device)
@@ -640,6 +746,8 @@ def run_predict(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the training and inference command-line interface."""
+
     parser = argparse.ArgumentParser(description="Train or run SAM3 LoRA text segmentation.")
     parser.add_argument("--config", default="./configs/config.yaml")
     subparsers = parser.add_subparsers(dest="command")
@@ -657,6 +765,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """CLI entry point."""
+
     args = parse_args()
     if args.command in (None, "train"):
         train(get_config(args.config))

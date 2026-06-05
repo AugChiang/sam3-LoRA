@@ -1,9 +1,13 @@
+"""Single-image inference CLI for SAM3 LoRA text-conditioned segmentation."""
+
 import argparse
 
 from main import run_predict
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for one image/object prediction."""
+
     parser = argparse.ArgumentParser(description="Predict a text-conditioned SAM3 mask.")
     parser.add_argument("--config", default="./configs/config.yaml")
     parser.add_argument("--image", required=True)
