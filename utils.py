@@ -65,8 +65,23 @@ def collate_samples(samples: List[Dict[str, Any]]) -> Batch:
     )
 
 
-# losses
+def require_cuda_device(device: torch.device) -> None:
+    """Validate that this SAM3 checkout can construct CUDA-only model components."""
+    if device.type != "cuda":
+        raise RuntimeError(
+            "This SAM3 checkout allocates CUDA tensors during model construction. "
+            "Use a CUDA device for training/inference, or update the SAM3 builder "
+            "before CPU-only execution."
+        )
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "Config requests CUDA, but torch.cuda.is_available() is false. This SAM3 "
+            "checkout also allocates CUDA tensors during model construction, so run on "
+            "a CUDA machine or update the SAM3 builder before CPU-only training."
+        )
 
+
+# losses
 def dice_loss(logits: torch.Tensor, targets: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     """Compute soft Dice loss from mask logits and binary targets."""
 
