@@ -4,8 +4,10 @@
 # test
 dataset/
 checkpoints/
-*test*.sh
 outputs/
+*.sh
+*.npy
+*.ipynb
 
 # settings
 .vscode
