@@ -14,17 +14,36 @@ The current implementation uses:
 
 ```text
 .
-├── main.py                  # training pipeline and shared inference logic
-├── predict.py               # single-image inference CLI
-├── segmentation.py          # SAM3 model wrapper
-├── get_config.py            # YAML config loader
-├── configs/config.yaml      # training and inference configuration
-├── checkpoints/             # SAM3 checkpoint and BPE vocab
+├── main.py                    # train/validation loop, dataloader/model builders, shared predict runner
+├── predict.py                 # single-image inference CLI wrapper
+├── dataset.py                 # DentalInstrumentDataset and annotation/mask loading
+├── utils.py                   # config loading, batching, losses, metrics, AMP helpers
+├── get_config.py              # legacy standalone YAML config loader
+├── models/
+│   ├── __init__.py            # model exports
+│   ├── sam3_base.py           # SAM3Wrapper and SAM3 prompt helpers
+│   ├── cross_attn_fusion.py   # cross-attention text fusion module
+│   └── txt_conditioned.py     # TextConditionedSAM3LoRA and LoRA save/load
+├── configs/config.yaml        # training and inference configuration
+├── checkpoints/               # SAM3 checkpoint and BPE vocab
+├── outputs/                   # training checkpoints and exported adapters
 └── dataset/
-    ├── annotation.json      # sample metadata
-    ├── images/              # input images
-    └── masks/               # binary mask .npy files
+    ├── annotation.json        # sample metadata
+    ├── images/                # input images
+    └── masks/                 # binary mask .npy files
 ```
+
+## Code Organization
+
+The implementation is split so the entry points stay small:
+
+- `main.py` wires configuration, dataset creation, model construction, training, validation, and the shared prediction routine.
+- `predict.py` only parses inference arguments and calls `main.run_predict`.
+- `dataset.py` owns the dataset schema, alias sampling, image transforms, and `.npy` mask loading.
+- `utils.py` owns reusable helpers: seeding, YAML loading, batching, Dice/Focal loss, mask selection, mIoU/Dice metrics, and device movement.
+- `models/sam3_base.py` wraps SAM3 construction and base prompt/inference helpers.
+- `models/cross_attn_fusion.py` contains the CLIP/SigLIP-to-SAM3 cross-attention fusion layer.
+- `models/txt_conditioned.py` combines SAM3, the external text encoder, fusion, PEFT LoRA adapters, checkpoint loading, and LoRA export.
 
 ## Requirements
 
@@ -104,6 +123,15 @@ outputs/sam3_lora/
 
 Only the fusion module and LoRA adapters are saved. The SAM3 base checkpoint remains separate in `checkpoints/sam3.pt`.
 
+The exported LoRA adapter directories are:
+
+```text
+outputs/sam3_lora/lora/image_encoder/
+outputs/sam3_lora/lora/mask_decoder/
+```
+
+The SAM3 segmentation head is intentionally not PEFT-wrapped because SAM3 runs it through an activation-checkpoint wrapper that requires the original forward signature.
+
 ## How To Run Inference
 
 After training, run:
@@ -132,6 +160,15 @@ python predict.py \
 
 The output is a binary mask saved as a `.npy` file.
 
+You can also run inference through the `main.py` subcommand:
+
+```bash
+python main.py --config ./configs/config.yaml predict \
+  --image dataset/images/0001.png \
+  --object "periodontal probe" \
+  --output prediction_mask.npy
+```
+
 ## Validation Metrics
 
 Each epoch reports:
@@ -148,4 +185,5 @@ The best checkpoint is selected by validation mIoU.
 - `torch.cuda.is_available() is false`: run on a CUDA machine; this SAM3 checkout is not CPU-safe.
 - HuggingFace download errors: pre-download the configured `text_encoder.name` or use a local model path.
 - Missing SAM3 imports: add the SAM3 repository to `PYTHONPATH`.
+- Import errors after moving files: run commands from the repository root. The scripts support both direct script execution and package-style imports.
 - Empty or poor masks: check that each `.npy` mask is binary, aligned with its image, and annotated with the correct object name or aliases.
