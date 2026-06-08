@@ -170,8 +170,30 @@ def move_batch(batch: Batch, device: torch.device) -> Batch:
     )
 
 
+def combine_mask(mask) -> np.ndarray:
+    """Combine one or more masks into a binary union mask."""
+
+    if isinstance(mask, torch.Tensor):
+        if mask.is_cuda:
+            mask = mask.cpu().detach()
+        mask = mask.numpy()
+    else:
+        mask = np.asarray(mask)
+
+    mask = np.squeeze(mask)
+    if mask.ndim == 2:
+        return (mask > 0).astype(np.uint8)
+
+    combined_mask = np.zeros(mask.shape[-2:], dtype=np.uint8)
+    # for candidate_mask in mask:
+    #     combined_mask[candidate_mask > 0] = 1
+    for idx, mask in enumerate(mask, start=1):
+        combined_mask[mask > 0] = idx
+    return combined_mask
+
+
 def select_original_sam3_mask(output: Dict[str, Any], image_size: Tuple[int, int]) -> np.ndarray:
-    """Select the best mask from a SAM3Processor output state."""
+    """Combine masks from a SAM3Processor output state into one binary mask."""
 
     width, height = image_size
     masks = output.get("masks")
@@ -182,15 +204,4 @@ def select_original_sam3_mask(output: Dict[str, Any], image_size: Tuple[int, int
         masks_tensor = masks.detach().cpu()
     else:
         masks_tensor = torch.as_tensor(masks)
-
-    scores = output.get("scores")
-    if scores is not None and len(scores) > 0:
-        scores_tensor = scores.detach().cpu() if isinstance(scores, torch.Tensor) else torch.as_tensor(scores)
-        mask_idx = int(scores_tensor.argmax().item())
-    else:
-        mask_idx = 0
-
-    mask = masks_tensor[mask_idx]
-    while mask.ndim > 2:
-        mask = mask.squeeze(0)
-    return (mask.numpy() > 0).astype(np.uint8)
+    return combine_mask(masks_tensor)
