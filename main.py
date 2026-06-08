@@ -114,7 +114,7 @@ def run_predict(args: argparse.Namespace) -> None:
     checkpoint_path = args.checkpoint or config.get("inference", {}).get("checkpoint")
     lora_dir = args.lora_dir or config.get("inference", {}).get("lora_dir")
 
-    model = build_model(config, device)
+    model: TextConditionedSAM3LoRA = build_model(config, device)
     if checkpoint_path and Path(checkpoint_path).exists():
         model.load_checkpoint(checkpoint_path, strict=False)
     elif checkpoint_path:
@@ -129,8 +129,9 @@ def run_predict(args: argparse.Namespace) -> None:
 
     image = Image.open(args.image).convert("RGB")
     mask = model.predict_mask(image, args.object, device)
+    mask = combine_mask(mask)
     output_path = args.output or "prediction_mask.npy"
-    np.save(output_path, mask.numpy().astype(np.uint8))
+    np.save(output_path, mask.astype(np.uint8))
     print(f"Saved mask to {output_path}")
 
 
