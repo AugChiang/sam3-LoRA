@@ -32,6 +32,35 @@ def select_text_conditioned_masks(out: Dict[str, torch.Tensor]) -> torch.Tensor:
     batch_idx = torch.arange(logits.shape[0], device=logits.device)
     return out["pred_masks"][batch_idx, best_idx]
 
+
+def filter_text_conditioned_masks(
+        out: Dict[str, torch.Tensor],
+        score_threshold: float,
+    ) -> torch.Tensor:
+    """
+    Return all predicted mask logits above the object-score threshold.
+
+    Falls back to the highest-scoring mask when no candidate passes the threshold.
+    This keeps inference useful on poorly calibrated checkpoints while allowing
+    generic prompts to return multiple object masks.
+    """
+
+    mask_logits = out["pred_masks"][0]
+    if mask_logits.ndim == 2:
+        mask_logits = mask_logits.unsqueeze(0)
+    elif mask_logits.ndim == 4 and mask_logits.shape[1] == 1:
+        mask_logits = mask_logits.squeeze(1)
+
+    scores = out.get("pred_logits")
+    if scores is None:
+        return mask_logits
+
+    scores = scores[0].squeeze(-1).sigmoid()
+    keep = scores > score_threshold
+    if not keep.any():
+        keep[scores.argmax()] = True
+    return mask_logits[keep]
+
 class TextConditionedSAM3LoRA(nn.Module):
     """SAM3 wrapper that trains LoRA adapters and a text fusion module."""
 
@@ -46,6 +75,9 @@ class TextConditionedSAM3LoRA(nn.Module):
         self.resolution = config.get("data", {}).get("resolution", 1008)
         self.confidence_threshold = config.get("inference", {}).get(
             "confidence_threshold", 0.5
+        )
+        self.mask_score_threshold = config.get("inference", {}).get(
+            "mask_score_threshold", self.confidence_threshold
         )
 
         self._freeze_sam3_base()
@@ -151,7 +183,7 @@ class TextConditionedSAM3LoRA(nn.Module):
         """Run SAM3 grounding with fused external text features.
 
         Args:
-            images: Normalized image tensor of shape ``[B, 3, H, W]``.
+            images: Normalized image tensor of shape `[B, 3, H, W]`.
             texts: Object prompts, one per image.
 
         Returns:
@@ -210,8 +242,15 @@ class TextConditionedSAM3LoRA(nn.Module):
         )
         return out
 
+    @torch.no_grad()
     def predict_mask(self, image: Image.Image, text: str, device: torch.device) -> torch.Tensor:
-        """Predict one binary mask for an image/object prompt pair."""
+        """
+        Predict candidate masks for an image/object prompt pair.
+
+        Returns:
+            Tensor of shape `[N, H, W]` containing one binary mask per kept
+            prediction, resized to the input image size.
+        """
 
         transform = v2.Compose(
             [
@@ -225,10 +264,10 @@ class TextConditionedSAM3LoRA(nn.Module):
         width, height = image.size
         image_tensor = transform(image.convert("RGB")).unsqueeze(0).to(device)
         out = self.forward(image_tensor, [text])
-        logits = select_text_conditioned_masks(out)[0]
+        logits = filter_text_conditioned_masks(out, self.mask_score_threshold)
         logits = interpolate(
-            logits[None, None], (height, width), mode="bilinear", align_corners=False
-        )[0, 0]
+            logits[:, None], (height, width), mode="bilinear", align_corners=False
+        )[:, 0]
         return (logits.sigmoid() > self.confidence_threshold).detach().cpu()
 
     def save_checkpoint(self, output_dir: str, epoch: int, metrics: Dict[str, float]) -> None:

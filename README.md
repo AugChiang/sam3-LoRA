@@ -41,7 +41,7 @@ The implementation is split so the entry points stay small:
 - `main.py` wires configuration, dataset creation, model construction, training, validation, and the shared prediction routine.
 - `predict.py` only parses inference arguments and calls `main.run_predict`.
 - `dataset.py` owns the dataset schema, alias sampling, image transforms, and `.npy` mask loading.
-- `utils.py` owns reusable helpers: seeding, YAML loading, batching, Dice/Focal loss, mask selection, mIoU/Dice metrics, and device movement.
+- `utils.py` owns reusable helpers: seeding, YAML loading, batching, Dice/Focal loss, mask combination, mIoU/Dice metrics, and device movement.
 - `models/sam3_base.py` wraps SAM3 construction and base prompt/inference helpers.
 - `models/cross_attn_fusion.py` contains the CLIP/SigLIP-to-SAM3 cross-attention fusion layer.
 - `models/txt_conditioned.py` combines SAM3, the external text encoder, fusion, PEFT LoRA adapters, checkpoint loading, and LoRA export.
@@ -94,9 +94,11 @@ Edit `configs/config.yaml` before training. Important fields:
 - `text_encoder.name`: HuggingFace CLIP or SigLIP model name, default `openai/clip-vit-base-patch32`.
 - `lora`: rank, alpha, dropout, and target module names.
 - `training`: epochs, batch size, learning rate, validation split, mixed precision, and output directory.
-- `inference`: default checkpoint and LoRA adapter paths.
+- `inference`: default checkpoint and LoRA adapter paths, plus mask and score thresholds.
 
 The default text encoder uses `use_safetensors: false`, matching the cached PyTorch CLIP weights validated in this environment.
+
+For LoRA inference, `inference.confidence_threshold` thresholds mask pixels and optional `inference.mask_score_threshold` filters candidate masks by object score. If `mask_score_threshold` is omitted, it defaults to the same value as `confidence_threshold`.
 
 ## How To Train
 
@@ -165,6 +167,8 @@ python predict.py \
 
 The output is a binary mask saved as a `.npy` file.
 
+For generic prompts such as `"objects on the table"`, LoRA inference keeps all candidate masks above `inference.mask_score_threshold`, resizes them to the input image, thresholds each mask, and combines them into one binary union mask. If no candidate passes the score threshold, inference falls back to the highest-scoring mask so the command still produces a useful output.
+
 You can also run inference through the `main.py` subcommand:
 
 ```bash
@@ -187,7 +191,7 @@ python predict.py \
   --output sam3_base_mask.npy
 ```
 
-This mode initializes only `models/sam3_base.py::SAM3Wrapper` with `checkpoints/sam3.pt` and `checkpoints/bpe_simple_vocab_16e6.txt.gz`, runs SAM3 text-prompt prediction, selects the highest-score mask, and saves it as a binary `.npy` file.
+This mode initializes only `models/sam3_base.py::SAM3Wrapper` with `checkpoints/sam3.pt` and `checkpoints/bpe_simple_vocab_16e6.txt.gz`, runs SAM3 text-prompt prediction, combines the returned masks, and saves one binary `.npy` file.
 
 The same mode is available through `main.py`:
 
@@ -208,6 +212,21 @@ Each epoch reports:
 - `val_dice`: Dice score
 
 The best checkpoint is selected by validation mIoU.
+
+## Model Scope and Generic Prompts
+
+This project is primarily a domain adaptation pipeline. 
+The default dataset and prompt configuration target dental instrument segmentation for our scenario, and the LoRA adapters are trained on that distribution. 
+As a result, the LoRA-adapted model can perform differently from base SAM3 on broad or out-of-domain prompts such as `"objects on the table"`.
+
+The architecture keeps some safeguards for general prompts:
+
+- the external CLIP/SigLIP text encoder is frozen by default, preserving its general text features;
+- `CrossAttentionFusion` uses a learnable gate, initialized at zero, to control how much external text features modify SAM3 text tokens;
+- `--mode sam3` runs the original SAM3 checkpoint without LoRA adapters or fusion, making it the baseline for comparison.
+
+Use `--mode sam3` and `--mode lora` on the same image and prompt when evaluating broad prompts. 
+If generic prompt quality matters, validate it explicitly rather than assuming the dental-instrument LoRA adapters improve every prompt type.
 
 ## Troubleshooting
 
