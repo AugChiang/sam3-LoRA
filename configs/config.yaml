@@ -2,9 +2,9 @@ device: &device 'cuda'
 seed: &seed 42
 
 dataset:
-  input_img_dir: "./dataset/images"
-  mask_dir: "./dataset/masks"
-  annotation_path: "./dataset/annotation.json"
+  input_img_dir: "./data/images"
+  mask_dir: "./data/masks"
+  annotation_path: "./data/annotation.json"
 
 data:
   resolution: 1008
