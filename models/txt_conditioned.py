@@ -243,7 +243,7 @@ class TextConditionedSAM3LoRA(nn.Module):
         return out
 
     @torch.no_grad()
-    def predict_mask(self, image: Image.Image, text: str, device: torch.device) -> torch.Tensor:
+    def predict_mask(self, image: Image.Image, text: str, device: Optional[torch.device]=None) -> torch.Tensor:
         """
         Predict candidate masks for an image/object prompt pair.
 
@@ -251,6 +251,8 @@ class TextConditionedSAM3LoRA(nn.Module):
             Tensor of shape `[N, H, W]` containing one binary mask per kept
             prediction, resized to the input image size.
         """
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         transform = v2.Compose(
             [
