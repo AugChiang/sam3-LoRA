@@ -10,6 +10,8 @@ The current implementation uses:
 - HuggingFace PEFT LoRA adapters on SAM3 vision and decoder modules
 - Dice + Focal loss, mixed precision training, validation mIoU and Dice
 
+<img src="https://github.com/AugChiang/sam3-LoRA/blob/main/assets/model_arch.png" alt="model_arch" style="width:auto; height:auto;">
+
 ## Repository Layout
 
 ```text
