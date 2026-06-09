@@ -20,3 +20,6 @@ outputs/
 # others
 .env
 AGENTS.md
+
+# exclude
+!assets/*.png
