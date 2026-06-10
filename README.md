@@ -67,7 +67,7 @@ checkpoints/sam3.pt
 checkpoints/bpe_simple_vocab_16e6.txt.gz
 ```
 
-## Dataset Format
+## Dataset Format - An Example
 
 `configs/config.yaml` points to `dataset/annotation.json`, `dataset/images`, and `dataset/masks`. 
 The annotation file may be a list or a dictionary with a top-level `samples` list, for example:
@@ -85,7 +85,7 @@ The annotation file may be a list or a dictionary with a top-level `samples` lis
 }
 ```
 
-Images are loaded from `dataset/images/`. Masks are loaded from `dataset/masks/` as binary NumPy arrays and resized to the configured training resolution. To add a new dental instrument, add images, masks, and annotation entries with a canonical name and optional aliases.
+Images are loaded from `dataset/images/`. Masks are loaded from `dataset/masks/` as binary NumPy arrays and resized to the configured training resolution. To add a new target object, add images, masks, and annotation entries with a canonical name and optional aliases.
 
 ## Configuration
 
@@ -218,7 +218,7 @@ The best checkpoint is selected by validation mIoU.
 ## Model Scope and Generic Prompts
 
 This project is primarily a domain adaptation pipeline. 
-The default dataset and prompt configuration target dental instrument segmentation for our scenario, and the LoRA adapters are trained on that distribution. 
+The default dataset and prompt configuration are targeting segmentation for interested objects, and the LoRA adapters will be trained on that distribution. 
 As a result, the LoRA-adapted model can perform differently from base SAM3 on broad or out-of-domain prompts such as `"objects on the table"`.
 
 The architecture keeps some safeguards for general prompts:
@@ -228,7 +228,7 @@ The architecture keeps some safeguards for general prompts:
 - `--mode sam3` runs the original SAM3 checkpoint without LoRA adapters or fusion, making it the baseline for comparison.
 
 Use `--mode sam3` and `--mode lora` on the same image and prompt when evaluating broad prompts. 
-If generic prompt quality matters, validate it explicitly rather than assuming the dental-instrument LoRA adapters improve every prompt type.
+If generic prompt quality matters, validate it explicitly rather than assuming the custom LoRA adapters improve every prompt type.
 
 ## Troubleshooting
 
