@@ -5,6 +5,7 @@
 data/
 checkpoints/
 outputs/
+test_output/
 *.sh
 *.npy
 *.ipynb
@@ -16,6 +17,7 @@ outputs/
 # settings
 .vscode
 .codex
+.agents
 
 # others
 .env
