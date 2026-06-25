@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 from torch.utils.data import DataLoader
 
-from models import TextConditionedSAM3LoRA
+from models import TextConditionedSAM3LoRA, EarlyStopper
 try:
     from .builder import *
     from .utils import *
@@ -26,7 +26,7 @@ def train(config: Dict[str, Any]) -> None:
     device = torch.device(config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     train_loader, val_loader = build_dataloaders(config)
     model = build_model(config, device)
-    train_cfg = config.get("training", {})
+    train_cfg: dict = config.get("training", {})
     optimizer = torch.optim.AdamW(
         model.trainable_parameters(),
         lr=train_cfg.get("lr", 1e-4),
@@ -39,16 +39,25 @@ def train(config: Dict[str, Any]) -> None:
     amp_dtype = autocast_dtype(device, train_cfg.get("amp_dtype", "float16"))
     output_dir = train_cfg.get("output_dir", "./outputs/sam3_lora")
     best_miou = -1.0
-
+    early_stop_cfg: dict = train_cfg.get("early_stop", {})
+    early_stopper = None
+    early_stop_monitor = early_stop_cfg.get("monitor", "miou")
+    if early_stop_cfg.get("enabled", False):
+        early_stopper = EarlyStopper(
+            patience=early_stop_cfg.get("patience", 3),
+            min_delta=early_stop_cfg.get("min_delta", 0.0),
+            mode=early_stop_cfg.get("mode", "max"),
+        )
+    loss_histroy = {"dice_loss": [], "focal_loss": []}
     for epoch in range(1, train_cfg.get("epochs", 10) + 1):
         model.train()
-        running_loss = 0.0
+        tr_loss = 0.0
         for step, batch in enumerate(train_loader, start=1):
-            batch = move_batch(batch, device)
+            batch: Batch = move_batch(batch, device)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_autocast):
                 out = model(batch.images, batch.texts)
-                loss, loss_parts = compute_loss(
+                loss, loss_dict = compute_loss(
                     out,
                     batch.masks,
                     dice_weight=train_cfg.get("dice_weight", 1.0),
@@ -60,22 +69,42 @@ def train(config: Dict[str, Any]) -> None:
                 nn.utils.clip_grad_norm_(model.trainable_parameters(), train_cfg["grad_clip_norm"])
             scaler.step(optimizer)
             scaler.update()
-            running_loss += float(loss.detach())
+            tr_loss += float(loss.detach())
             if step % train_cfg.get("log_every", 10) == 0:
                 print(
-                    f"epoch={epoch} step={step} loss={running_loss / step:.4f} "
-                    f"dice_loss={loss_parts['dice_loss']:.4f} focal_loss={loss_parts['focal_loss']:.4f}"
+                    f"epoch={epoch} step={step} loss={tr_loss / step:.4f} "
+                    f"dice_loss={loss_dict['dice_loss']:.4f} focal_loss={loss_dict['focal_loss']:.4f}"
                 )
+            loss_histroy["dice_loss"].append(loss_dict['dice_loss'])
+            loss_histroy["focal_loss"].append(loss_dict['focal_loss'])
 
         metrics = validate(model, val_loader, device, amp_dtype, use_autocast)
         print(
-            f"epoch={epoch} train_loss={running_loss / max(len(train_loader), 1):.4f} "
+            f"epoch={epoch} train_loss={tr_loss / max(len(train_loader), 1):.4f} "
             f"val_miou={metrics['miou']:.4f} val_dice={metrics['dice']:.4f}"
         )
         model.save_checkpoint(output_dir, epoch, metrics)
+        # save losses
+        np.save(f"{output_dir}/dice-loss.npy", np.array(loss_histroy['dice_loss']))
+        np.save(f"{output_dir}/focal-loss.npy", np.array(loss_histroy['dice_loss']))
         if metrics["miou"] > best_miou:
             best_miou = metrics["miou"]
             model.save_checkpoint(Path(output_dir) / "best", epoch, metrics)
+        if early_stopper is not None:
+            if early_stop_monitor not in metrics:
+                raise KeyError(
+                    f"early stopping monitor '{early_stop_monitor}' is not in validation metrics: "
+                    f"{sorted(metrics.keys())}"
+                )
+            monitor_value = metrics[early_stop_monitor]
+            if early_stopper.step(monitor_value):
+                print(
+                    f"early stopping at epoch={epoch}: "
+                    f"{early_stop_monitor}={monitor_value:.4f}, "
+                    f"best={early_stopper.best_score:.4f}, "
+                    f"patience={early_stopper.patience}"
+                )
+                break
 
 
 @torch.no_grad()

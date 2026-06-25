@@ -2,9 +2,9 @@ device: &device 'cuda'
 seed: &seed 42
 
 dataset:
-  input_img_dir: "./data/images"
-  mask_dir: "./data/masks"
-  annotation_path: "./data/annotation.json"
+  input_img_dir: "./dental-tools/images"
+  mask_dir: "./dental-tools/masks"
+  annotation_path: "./dental-tools/annotation.json"
 
 data:
   resolution: 1008
@@ -28,8 +28,8 @@ fusion:
 
 lora:
   enabled: true
-  r: 8
-  alpha: 16
+  r: 8 # the higher, the more capacity
+  alpha: 16 # the larger, the more dominant
   dropout: 0.05
   bias: "none"
   target_modules:
@@ -41,7 +41,7 @@ lora:
 
 training:
   epochs: 10
-  batch_size: 1
+  batch_size: 4
   num_workers: 0
   lr: 0.0001
   weight_decay: 0.0001
@@ -53,10 +53,27 @@ training:
   focal_weight: 1.0
   grad_clip_norm: 1.0
   log_every: 1
-  output_dir: "./outputs/sam3_lora"
+  output_dir: "./outputs/sam3_lora_dental"
+  augmentation:
+    enabled: true
+    horizontal_flip_prob: 0.5
+    vertical_flip_prob: 0.2
+    rotation_degrees: 15.0
+    translate: 0.05
+    scale_min: 0.9
+    scale_max: 1.1
+    brightness: 0.15
+    contrast: 0.15
+    saturation: 0.1
+  early_stop:
+    enabled: true
+    monitor: "miou"
+    mode: "max"
+    patience: 3
+    min_delta: 1e-3
 
 inference:
-  checkpoint: "./outputs/sam3_lora/best/checkpoint.pt"
-  lora_dir: "./outputs/sam3_lora/best/lora"
+  checkpoint: "./outputs/sam3_lora_dental/best/checkpoint.pt"
+  lora_dir: "./outputs/sam3_lora_dental/best/lora"
   confidence_threshold: 0.5
   default_prompt: "dental instrument"
