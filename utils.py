@@ -131,7 +131,12 @@ def compute_loss(
     dice_weight: float = 1.0,
     focal_weight: float = 1.0,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """Compute weighted Dice plus Focal training loss."""
+    """
+    Compute weighted Dice plus Focal training loss.
+
+    Returns:
+        total loss, {"dice_loss", "focal_loss"}
+    """
 
     pred_logits = select_text_conditioned_masks(out)
     targets = resize_targets(targets, pred_logits.shape[-2:])
