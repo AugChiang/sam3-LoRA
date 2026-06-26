@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - handled at runtime with a clear messag
     get_peft_model = None
 
 try:
+    from sam3.model import box_ops
     from sam3.model.data_misc import FindStage, interpolate
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
@@ -27,10 +28,28 @@ except ImportError as exc:  # pragma: no cover
 def select_text_conditioned_masks(out: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Select the highest-scoring predicted mask for each batch item."""
 
-    logits = out["pred_logits"].squeeze(-1)
-    best_idx = logits.argmax(dim=1)
-    batch_idx = torch.arange(logits.shape[0], device=logits.device)
+    scores = text_conditioned_scores(out)
+    best_idx = scores.argmax(dim=1)
+    batch_idx = torch.arange(scores.shape[0], device=scores.device)
     return out["pred_masks"][batch_idx, best_idx]
+
+
+def text_conditioned_scores(out: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """Compute SAM3-style object scores from detector and presence logits."""
+
+    if "pred_scores" in out:
+        return out["pred_scores"]
+    scores = out["pred_logits"].sigmoid()
+    presence_logits = out.get("presence_logit_dec")
+    if presence_logits is not None:
+        presence_score = presence_logits.sigmoid()
+        if presence_score.shape == scores.shape[:-1]:
+            presence_score = presence_score.unsqueeze(-1)
+        else:
+            while presence_score.ndim < scores.ndim:
+                presence_score = presence_score.unsqueeze(1)
+        scores = scores * presence_score
+    return scores.squeeze(-1)
 
 
 def filter_text_conditioned_masks(
@@ -51,15 +70,44 @@ def filter_text_conditioned_masks(
     elif mask_logits.ndim == 4 and mask_logits.shape[1] == 1:
         mask_logits = mask_logits.squeeze(1)
 
-    scores = out.get("pred_logits")
-    if scores is None:
+    if "pred_logits" not in out:
         return mask_logits
 
-    scores = scores[0].squeeze(-1).sigmoid()
+    keep = text_conditioned_keep_mask(out, score_threshold)
+    return mask_logits[keep]
+
+
+def text_conditioned_keep_mask(
+    out: Dict[str, torch.Tensor],
+    score_threshold: float,
+    batch_idx: int = 0,
+) -> torch.Tensor:
+    """Return the SAM3-style keep mask, with best-candidate fallback."""
+
+    scores = text_conditioned_scores(out)[batch_idx]
     keep = scores > score_threshold
     if not keep.any():
         keep[scores.argmax()] = True
-    return mask_logits[keep]
+    return keep
+
+
+def filter_text_conditioned_boxes(
+    out: Dict[str, torch.Tensor],
+    score_threshold: float,
+    image_size: Tuple[int, int],
+) -> torch.Tensor:
+    """Return kept boxes in original-image `[x1, y1, x2, y2]` pixel coordinates."""
+
+    boxes = out["pred_boxes"][0]
+    if boxes.ndim == 1:
+        boxes = boxes.unsqueeze(0)
+    if "pred_logits" in out:
+        boxes = boxes[text_conditioned_keep_mask(out, score_threshold)]
+
+    width, height = image_size
+    boxes = box_ops.box_cxcywh_to_xyxy(boxes)
+    scale = torch.tensor([width, height, width, height], device=boxes.device, dtype=boxes.dtype)
+    return boxes * scale
 
 class TextConditionedSAM3LoRA(nn.Module):
     """SAM3 wrapper that trains LoRA adapters and a text fusion module."""
@@ -240,6 +288,7 @@ class TextConditionedSAM3LoRA(nn.Module):
             prompt_mask=prompt_mask,
             hs=hs,
         )
+        out["pred_scores"] = text_conditioned_scores(out)
         return out
 
     @torch.no_grad()
@@ -271,6 +320,33 @@ class TextConditionedSAM3LoRA(nn.Module):
             logits[:, None], (height, width), mode="bilinear", align_corners=False
         )[:, 0]
         return (logits.sigmoid() > self.confidence_threshold).detach().cpu()
+
+    @torch.no_grad()
+    def predict_boxes(self, image: Image.Image, text: str, device: Optional[torch.device]=None) -> torch.Tensor:
+        """
+        Predict boxes for kept mask candidates in `[x1, y1, x2, y2]` format.
+
+        Returns:
+            Tensor of shape `[N, 4]` in original-image pixel coordinates, where
+            `(x1, y1)` is the top-left corner and `(x2, y2)` is the bottom-right corner.
+        """
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        transform = v2.Compose(
+            [
+                v2.ToImage(),
+                v2.ToDtype(torch.uint8, scale=True),
+                v2.Resize(size=(self.resolution, self.resolution)),
+                v2.ToDtype(torch.float32, scale=True),
+                v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ]
+        )
+        width, height = image.size
+        image_tensor = transform(image.convert("RGB")).unsqueeze(0).to(device)
+        out = self.forward(image_tensor, [text])
+        boxes = filter_text_conditioned_boxes(out, self.mask_score_threshold, (width, height))
+        return boxes.detach().cpu()
 
     def save_checkpoint(self, output_dir: str, epoch: int, metrics: Dict[str, float]) -> None:
         """Save fusion weights, metrics, config, and separate LoRA adapter weights."""

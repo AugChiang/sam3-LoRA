@@ -120,10 +120,29 @@ def resize_targets(targets: torch.Tensor, pred_hw: Tuple[int, int]) -> torch.Ten
 def select_text_conditioned_masks(out: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Select the highest-scoring predicted mask for each batch item."""
 
-    logits = out["pred_logits"].squeeze(-1)
-    best_idx = logits.argmax(dim=1)
-    batch_idx = torch.arange(logits.shape[0], device=logits.device)
+    scores = text_conditioned_scores(out)
+    best_idx = scores.argmax(dim=1)
+    batch_idx = torch.arange(scores.shape[0], device=scores.device)
     return out["pred_masks"][batch_idx, best_idx]
+
+
+def text_conditioned_scores(out: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """Compute SAM3-style object scores from detector and presence logits."""
+
+    if "pred_scores" in out:
+        return out["pred_scores"]
+    scores = out["pred_logits"].sigmoid()
+    presence_logits = out.get("presence_logit_dec")
+    if presence_logits is not None:
+        presence_score = presence_logits.sigmoid()
+        if presence_score.shape == scores.shape[:-1]:
+            presence_score = presence_score.unsqueeze(-1)
+        else:
+            while presence_score.ndim < scores.ndim:
+                presence_score = presence_score.unsqueeze(1)
+        scores = scores * presence_score
+    return scores.squeeze(-1)
+
 
 def compute_loss(
     out: Dict[str, torch.Tensor],
@@ -131,7 +150,12 @@ def compute_loss(
     dice_weight: float = 1.0,
     focal_weight: float = 1.0,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """Compute weighted Dice plus Focal training loss."""
+    """
+    Compute weighted Dice plus Focal training loss.
+
+    Returns:
+        total loss, {"dice_loss", "focal_loss"}
+    """
 
     pred_logits = select_text_conditioned_masks(out)
     targets = resize_targets(targets, pred_logits.shape[-2:])

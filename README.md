@@ -96,6 +96,7 @@ Edit `configs/config.yaml` before training. Important fields:
 - `text_encoder.name`: HuggingFace CLIP or SigLIP model name, default `openai/clip-vit-base-patch32`.
 - `lora`: rank, alpha, dropout, and target module names.
 - `training`: epochs, batch size, learning rate, validation split, mixed precision, and output directory.
+- `training.augmentation`: train-only random flips, affine jitter, and brightness/contrast/saturation jitter for image-mask pairs.
 - `inference`: default checkpoint and LoRA adapter paths, plus mask and score thresholds.
 
 The default text encoder uses `use_safetensors: false`, matching the cached PyTorch CLIP weights validated in this environment.

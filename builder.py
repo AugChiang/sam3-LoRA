@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Subset
 from models import TextConditionedSAM3LoRA, SAM3Wrapper
 
 try:
@@ -15,23 +15,37 @@ def build_dataloaders(config: Dict[str, Any]) -> Tuple[DataLoader, DataLoader]:
 
     data_cfg = config["dataset"]
     train_cfg = config.get("training", {})
-    dataset = CustomDataset(
-        annotation_path=data_cfg["annotation_path"],
-        image_dir=data_cfg["input_img_dir"],
-        mask_dir=data_cfg["mask_dir"],
-        resolution=config.get("data", {}).get("resolution", 1008),
-        alias_mode=train_cfg.get("alias_mode", "random"),
+    dataset_args = {
+        "annotation_path": data_cfg["annotation_path"],
+        "image_dir": data_cfg["input_img_dir"],
+        "mask_dir": data_cfg["mask_dir"],
+        "resolution": config.get("data", {}).get("resolution", 1008),
+        "alias_mode": train_cfg.get("alias_mode", "random"),
+    }
+    train_dataset = CustomDataset(
+        **dataset_args,
+        augmentation=train_cfg.get("augmentation", {}),
     )
+    val_dataset = CustomDataset(
+        **dataset_args,
+        augmentation={"enabled": False},
+    )
+    dataset_size = len(train_dataset)
     val_fraction = train_cfg.get("val_fraction", 0.2)
-    val_size = max(1, int(round(len(dataset) * val_fraction))) if len(dataset) > 1 else 1
-    train_size = max(1, len(dataset) - val_size)
-    if train_size + val_size > len(dataset):
-        train_size, val_size = len(dataset), 0
+    val_size = max(1, int(round(dataset_size * val_fraction))) if dataset_size > 1 else 1
+    train_size = max(1, dataset_size - val_size)
+    if train_size + val_size > dataset_size:
+        train_size, val_size = dataset_size, 0
     generator = torch.Generator().manual_seed(config.get("seed", 42))
+    indices = torch.randperm(dataset_size, generator=generator).tolist()
+    train_indices = indices[:train_size]
+    val_indices = indices[train_size : train_size + val_size]
     if val_size > 0:
-        train_ds, val_ds = random_split(dataset, [train_size, val_size], generator=generator)
+        train_ds = Subset(train_dataset, train_indices)
+        val_ds = Subset(val_dataset, val_indices)
     else:
-        train_ds, val_ds = dataset, dataset
+        train_ds = train_dataset
+        val_ds = val_dataset
     batch_size = train_cfg.get("batch_size", 1)
     train_loader = DataLoader(
         train_ds,
