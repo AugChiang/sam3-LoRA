@@ -30,7 +30,7 @@ The current implementation uses:
 ├── configs/config.yaml        # training and inference configuration
 ├── checkpoints/               # SAM3 checkpoint and BPE vocab
 ├── outputs/                   # training checkpoints and exported adapters
-└── dataset/
+└── data/
     ├── annotation.json        # sample metadata
     ├── images/                # input images
     └── masks/                 # binary mask .npy files
@@ -69,23 +69,25 @@ checkpoints/bpe_simple_vocab_16e6.txt.gz
 
 ## Dataset Format - An Example
 
-`configs/config.yaml` points to `dataset/annotation.json`, `dataset/images`, and `dataset/masks`. 
+`configs/config.yaml` points to `data/annotation.json`, `data/images`, and `data/masks`.
 The annotation file may be a list or a dictionary with a top-level `samples` list, for example:
 
 ```json
 {
   "samples": [
     {
-      "image": "0001.png",
-      "canonical_name": "periodontal probe",
-      "aliases": ["probe", "dental probe"],
-      "mask": "0001_probe.npy"
+      "image": "0001.jpeg",
+      "canonical_name": "sickle probe",
+      "aliases": ["dental probe", "dental sickle probe"],
+      "mask": "0001.npy"
     }
   ]
 }
 ```
 
-Images are loaded from `dataset/images/`. Masks are loaded from `dataset/masks/` as binary NumPy arrays and resized to the configured training resolution. To add a new target object, add images, masks, and annotation entries with a canonical name and optional aliases.
+Images are loaded from `data/images/`. 
+Masks are loaded from `data/masks/` as binary NumPy arrays and resized to the configured training resolution. 
+To add a new target object, add images, masks, and annotation entries with a canonical name and optional aliases.
 
 ## Configuration
 
@@ -95,7 +97,7 @@ Edit `configs/config.yaml` before training. Important fields:
 - `data.resolution`: SAM3 input resolution, default `1008`.
 - `text_encoder.name`: HuggingFace CLIP or SigLIP model name, default `openai/clip-vit-base-patch32`.
 - `lora`: rank, alpha, dropout, and target module names.
-- `training`: epochs, batch size, learning rate, validation split, mixed precision, and output directory.
+- `training`: epochs, batch size, learning rate, validation split, mixed precision, early stopping, and output directory.
 - `training.augmentation`: train-only random flips, affine jitter, and brightness/contrast/saturation jitter for image-mask pairs.
 - `inference`: default checkpoint and LoRA adapter paths, plus mask and score thresholds.
 
@@ -137,7 +139,7 @@ outputs/sam3_lora/lora/image_encoder/
 outputs/sam3_lora/lora/mask_decoder/
 ```
 
-The SAM3 segmentation head is intentionally not PEFT-wrapped because SAM3 runs it through an activation-checkpoint wrapper that requires the original forward signature.
+The SAM3 segmentation head is intentionally **NOT** PEFT-wrapped because SAM3 runs it through an activation-checkpoint wrapper that requires the original forward signature.
 
 ## How To Run Inference
 
@@ -146,8 +148,8 @@ After training, run LoRA-adapted inference:
 ```bash
 python predict.py \
   --mode lora \
-  --image dataset/images/0001.png \
-  --object "periodontal probe"
+  --image data/images/0001.jpeg \
+  --object "sickle probe"
 ```
 
 By default this reads:
@@ -177,8 +179,8 @@ You can also run inference through the `main.py` subcommand:
 ```bash
 python main.py --config ./configs/config.yaml predict \
   --mode lora \
-  --image dataset/images/0001.png \
-  --object "periodontal probe" \
+  --image data/images/0001.jpeg \
+  --object "sickle probe" \
   --output prediction_mask.npy
 ```
 
@@ -189,8 +191,8 @@ To run the original SAM3 checkpoint without LoRA adapters, CLIP/SigLIP fusion, o
 ```bash
 python predict.py \
   --mode sam3 \
-  --image dataset/images/0001.png \
-  --object "periodontal probe" \
+  --image data/images/0001.jpeg \
+  --object "sickle probe" \
   --output sam3_base_mask.npy
 ```
 
@@ -201,8 +203,8 @@ The same mode is available through `main.py`:
 ```bash
 python main.py --config ./configs/config.yaml predict \
   --mode sam3 \
-  --image dataset/images/0001.png \
-  --object "periodontal probe" \
+  --image data/images/0001.jpeg \
+  --object "sickle probe" \
   --output sam3_base_mask.npy
 ```
 
